@@ -156,7 +156,9 @@ try {
   const xy = points(manual);
   near(Math.min(...xy.filter((_, i) => i % 2 === 0)), 30);
   near(Math.min(...xy.filter((_, i) => i % 2 === 1)), 40);
-  near(Math.max(...xy.filter((_, i) => i % 2 === 0)) - 30, 70);
+  // Physical SVG import includes browser CTM and flattening precision. Allow 0.01 mm
+  // only for this parser-to-physical-size assertion; placement invariants remain strict.
+  near(Math.max(...xy.filter((_, i) => i % 2 === 0)) - 30, 70, 0.01);
   pass("manual X/Y and actual SVG physical scale");
   await page.getByRole("button", { name: "Center both", exact: true }).click();
   await idle();
