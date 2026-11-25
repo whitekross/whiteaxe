@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1123" viewBox="0 0 800 1123" fill="none">
+  <g id="red"><path stroke="#c43e32" d="M 100 100 L 900 200 L 100 300"/></g>
+  <g id="blue"><path stroke="#3154a3" d="M 150 400 L 400 400"/></g>
+  <g id="green"><path stroke="#228844" d="M 850 500 L 950 600"/></g>
+</svg>
