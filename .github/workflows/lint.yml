@@ -4,6 +4,7 @@ name: Node.js CI
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
   pull_request:
     branches: [ "main" ]
 jobs:
@@ -37,5 +38,8 @@ jobs:
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
       - run: npm install --prefer-offline --no-audit  --no-fund --ignore-scripts
       - run: npm test
+      - run: npm run build
+      - run: npx --no-install tsc --project tsconfig.ui.json --noEmit
+      - run: node cli.mjs --help
 permissions:
   contents: read
