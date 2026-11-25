@@ -1,6 +1,6 @@
 # Whiteaxe roadmap
 
-Status: Phases 0–2 complete and approved. Phase 3 manual placement in review. Builds and browser tests passed for Phase 2; no hardware tests performed yet.
+Status: Phases 0–3 complete and approved. Phase 3B Studio redesign in review. Hardware tests remain pending.
 
 ## Phase 0 — Feasibility and scope
 
@@ -39,7 +39,15 @@ GATE 2: approved and merged. CI run 45598286011: 28 tests and eight Chrome check
 - Validate finite values and full machine bounds. Show out-of-bounds warning; do not silently clip manual placement.
 - Test unit conversion, SVG origins, centering, scaling, clipping provenance and preview/plan equivalence.
 
-GATE 3: manual placement works in dry run and core features are complete.
+GATE 3: approved and merged; 37 automated tests and 14 browser checks passed (run 45666865071).
+
+## Phase 3B — Whiteaxe Studio UI
+
+- Modern neutral desktop workspace, canvas left and inspector right, accessible controls and collapsible settings.
+- Header SVG opening and connection status, light/dark themes, paper rulers, zoom/pan and selection outline.
+- Preserve all prior functionality and verify with existing and expanded real browser tests.
+
+GATE 3B: functional and visual review of the real interface, no changes to motion planning.
 
 ## Phase 4 — Optional multicolor workflow
 

@@ -17,7 +17,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { centerManual, layerStrokes, manualDimensions, manualPlacementError, placeArtwork, previewInk, startManual } from "./artwork.js";
+import { artworkBounds, centerManual, layerStrokes, manualDimensions, manualPlacementError, placeArtwork, previewInk, startManual } from "./artwork.js";
 import { PaperSize } from "./paper-size.js";
 import { Device, defaultPlanOptions, Plan, type ManualPlacement, type PlanOptions, type TransferredMotion, XYMotion } from "./planning.js";
 import useComponentSize from "./useComponentSize.js";
@@ -660,11 +660,13 @@ function PlanPreview({
   previewSize,
   plan,
   onDragging,
+  allowDrag,
 }: {
   state: State;
   previewSize: { width: number; height: number };
   plan: Plan | null;
   onDragging: (value: boolean) => void;
+  allowDrag: boolean;
 }) {
   const dispatch = useContext(DispatchContext);
   const [draft, setDraft] = useState<ManualPlacement | null>(null);
@@ -675,7 +677,7 @@ function PlanPreview({
   const strokeWidth = state.visualizationOptions.penStrokeWidth * device.stepsPerMm;
   const colorPathsByStrokeOrder = state.visualizationOptions.colorPathsByStrokeOrder;
   const showArtwork = state.visualizationOptions.previewMode === "artwork" && state.progress === null;
-  const canDrag = showArtwork && !!manual && !!state.paths;
+  const canDrag = allowDrag && showArtwork && !!manual && !!state.paths;
   const toPaper = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     return { x: (e.clientX - rect.left) * ps.size.x / rect.width, y: (e.clientY - rect.top) * ps.size.y / rect.height };
@@ -712,6 +714,14 @@ function PlanPreview({
       </g>
     );
   }, [showArtwork, state.paths, state.planOptions, strokeWidth, device.stepsPerMm, draft]);
+  const selectionBounds = useMemo(() => {
+    if (!showArtwork || !manual || !state.paths) return null;
+    return artworkBounds(placeArtwork(state.paths, {
+      ...state.planOptions,
+      manualPlacement: draft ?? manual,
+      layerMode: "all",
+    }).map((path) => path.points));
+  }, [showArtwork, manual, state.paths, state.planOptions, draft]);
   const memoizedPlanPreview = useMemo(() => {
     if (plan) {
       const palette = colorPathsByStrokeOrder
@@ -825,7 +835,18 @@ function PlanPreview({
     </g>
   );
   return (
-    <div className="preview">
+    <div className="paper-frame">
+      <div className="ruler ruler-x" aria-hidden="true">
+        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.x / 20) + 1)) }, (_, i) => (
+          <span key={i * 20} style={{ left: `${i * 20 / ps.size.x * 100}%` }}>{i * 20}</span>
+        ))}
+      </div>
+      <div className="ruler ruler-y" aria-hidden="true">
+        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.y / 20) + 1)) }, (_, i) => (
+          <span key={i * 20} style={{ top: `${i * 20 / ps.size.y * 100}%` }}>{i * 20}</span>
+        ))}
+      </div>
+      <div className="preview">
       <svg
         width={width}
         height={height}
@@ -855,8 +876,24 @@ function PlanPreview({
         <title>{showArtwork ? "Artwork preview" : "Plot preview"}</title>
         {showArtwork ? memoizedArtwork : memoizedPlanPreview}
         {margins}
+        {selectionBounds && (
+          <g className="selection-bounds" pointerEvents="none">
+            <rect
+              x={selectionBounds.minX}
+              y={selectionBounds.minY}
+              width={selectionBounds.maxX - selectionBounds.minX}
+              height={selectionBounds.maxY - selectionBounds.minY}
+              fill="none"
+              stroke="#4879bc"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+              strokeDasharray="4 3"
+            />
+          </g>
+        )}
       </svg>
       {progressIndicator}
+      </div>
     </div>
   );
 }
@@ -1249,6 +1286,12 @@ function Root() {
   const { isPlanning, plan, setPlan, planningError } = usePlan(state.paths, state.planOptions);
   const [dragging, setDragging] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">(() => window.localStorage.getItem("whiteaxe-theme") === "dark" ? "dark" : "light");
+  const [zoom, setZoom] = useState(1);
+  const [panMode, setPanMode] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const panStart = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem("planOptions", JSON.stringify(state.planOptions));
@@ -1295,6 +1338,7 @@ function Root() {
       const reader = new FileReader();
       reader.onload = () => {
         dispatch(setPaths(readSvg(reader.result as string)));
+        setFileName(file.name);
         setIsLoadingFile(false);
       };
       reader.onerror = () => {
@@ -1324,6 +1368,7 @@ function Root() {
     const onpaste = (e: ClipboardEvent) => {
       e.clipboardData?.items[0].getAsString((s) => {
         dispatch(setPaths(readSvg(s)));
+        setFileName("Pasted SVG");
       });
     };
     document.body.addEventListener("drop", ondrop);
@@ -1344,128 +1389,170 @@ function Root() {
     return new Date();
   }, [state.progress, state.paused]);
 
-  const previewArea = useRef(null);
+  const previewArea = useRef<HTMLDivElement>(null);
   const previewSize = useComponentSize(previewArea);
   const showDragTarget = !state.paths && !plan && !isLoadingFile && !isPlanning;
 
+  const locked = state.progress !== null || dragging;
+  const paper = state.planOptions.paperSize.size;
+  const viewport = { width: Math.max(0, previewSize.width - 88), height: Math.max(0, previewSize.height - 88) };
+  const changeZoom = (value: number) => setZoom(Math.max(0.5, Math.min(4, value)));
+  const resetView = () => {
+    setZoom(1);
+    previewArea.current?.scrollTo(0, 0);
+  };
+
   return (
     <DispatchContext.Provider value={dispatch}>
-      <div className={`root ${state.connected ? "connected" : "disconnected"}`}>
-        <div className="control-panel">
-          <div className={"saxi-title red"}>
-            <span className="red reg">s</span>
-            <span className="teal">axi</span>
-          </div>
-          {!IS_WEB && (
-            <div className={state.connected && state.deviceInfo?.path ? "info" : "info-disconnected"}>
-              {state.connected
-                ? state.deviceInfo?.path
-                  ? `Connected to EBB at ${state.deviceInfo.path}`
-                  : "Not connected to EBB"
-                : "disconnected"}
-            </div>
-          )}
-          {IS_WEB && (
-            <PortSelector
-              driver={driver}
-              setDriver={setDriver}
-              hardware={(driver as WebSerialDriver)?.ebb?.hardware ?? state.planOptions.hardware}
+      <div className={`root studio ${state.connected ? "connected" : "disconnected"}`} data-theme={theme}>
+        <header className="studio-header">
+          <div className="studio-brand">whiteaxe<span>.</span><small>STUDIO</small></div>
+          <div className="file-controls">
+            <button type="button" className="open-file" disabled={locked || isLoadingFile} onClick={() => fileInput.current?.click()}>
+              <span aria-hidden="true">↗</span> Open SVG
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".svg,image/svg+xml"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+                e.target.value = "";
+              }}
             />
-          )}
-          <fieldset className="plot-settings" disabled={state.progress !== null || dragging}>
-          <div className="section-header">pen</div>
-          <div className="section-body">
-            <PenHeight state={state} driver={driver} />
-            <MotorControl driver={driver} />
-            <HardwareOptions state={state} driver={driver} />
-            <ResetToDefaultsButton />
+            <span className="file-name" title={fileName ?? "No artwork loaded"}>{fileName ?? "Untitled"}</span>
           </div>
-          <div className="section-header">paper</div>
-          <div className="section-body">
-            <PaperConfig state={state} />
-            <PlacementControls state={state} />
-            <LayerSelector state={state} />
-            <div className="preview-mode-toggle">
-              <label>
-                preview
+          <div className="header-right">
+            <div className="connection-status">
+              <span className={`connection-dot ${driver?.connected && (IS_WEB || state.deviceInfo?.path) ? "is-connected" : ""}`} />
+              <span>{driver?.connected && (IS_WEB || state.deviceInfo?.path) ? "Connected" : "No plotter"}</span>
+              {IS_WEB && <PortSelector driver={driver} setDriver={setDriver} hardware={(driver as WebSerialDriver)?.ebb?.hardware ?? state.planOptions.hardware} />}
+            </div>
+            <button type="button" className="theme-toggle" aria-label="Toggle theme" onClick={() => {
+              const next = theme === "light" ? "dark" : "light";
+              setTheme(next);
+              window.localStorage.setItem("whiteaxe-theme", next);
+            }}>{theme === "light" ? "☾" : "☀"}</button>
+          </div>
+        </header>
+        <main className="studio-workspace">
+          <section className="canvas-workspace" aria-label="Artwork workspace">
+            <div className="canvas-toolbar">
+              <div className="preview-mode-toggle">
                 <select
+                  aria-label="Preview mode"
                   value={state.visualizationOptions.previewMode}
                   onChange={(e) => dispatch({ type: "SET_VISUALIZATION_OPTION", value: { previewMode: e.target.value === "plot" ? "plot" : "artwork" } })}
                 >
-                  <option value="artwork">Artwork (colors)</option>
-                  <option value="plot">Plot (motion)</option>
+                  <option value="artwork">Artwork</option>
+                  <option value="plot">Plot preview</option>
                 </select>
-              </label>
+              </div>
+              <div className="view-controls">
+                <button type="button" aria-pressed={!panMode} disabled={dragging} onClick={() => setPanMode(false)} title="Move artwork in Manual mode">Move</button>
+                <button type="button" aria-pressed={panMode} disabled={dragging} onClick={() => setPanMode(true)} title="Pan the viewport without moving artwork">Pan</button>
+              </div>
+              <div className="zoom-controls">
+                <button type="button" aria-label="Zoom out" disabled={dragging || zoom <= 0.5} onClick={() => changeZoom(zoom / 1.25)}>−</button>
+                <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+                <button type="button" aria-label="Zoom in" disabled={dragging || zoom >= 4} onClick={() => changeZoom(zoom * 1.25)}>+</button>
+                <button type="button" disabled={dragging} onClick={resetView}>Fit view</button>
+              </div>
             </div>
-          </div>
-          <details>
-            <summary className="section-header">more</summary>
-            <div className="section-body">
-              <PlanConfig state={state} />
-              <OriginOptions state={state} />
-              <VisualizationOptions state={state} />
+            <div
+              className={`preview-area ${panMode ? "pan-mode" : ""}`}
+              ref={previewArea}
+              onPointerDown={(e) => {
+                if (!panMode || e.button !== 0 || !state.paths) return;
+                const el = e.currentTarget;
+                panStart.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+                el.setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                const start = panStart.current;
+                if (!start) return;
+                e.currentTarget.scrollLeft = start.left + start.x - e.clientX;
+                e.currentTarget.scrollTop = start.top + start.y - e.clientY;
+              }}
+              onPointerUp={() => { panStart.current = null; }}
+              onPointerCancel={() => { panStart.current = null; }}
+              onLostPointerCapture={() => { panStart.current = null; }}
+            >
+              <div className="canvas-stage" style={{
+                width: Math.max(previewSize.width, viewport.width * zoom + 88),
+                height: Math.max(previewSize.height, viewport.height * zoom + 88),
+              }}>
+                <PlanPreview state={state} previewSize={{ width: viewport.width * zoom, height: viewport.height * zoom }} plan={plan} onDragging={setDragging} allowDrag={!panMode} />
+                <PlanLoader isPlanning={isPlanning} isLoadingFile={isLoadingFile} />
+                {showDragTarget && (
+                  <div className="drag-target">
+                    <div className="drag-target-message">
+                      <div className="empty-icon" aria-hidden="true">↗</div>
+                      <strong>Start with an artwork</strong>
+                      <span>Drop an SVG here, or open a file.</span>
+                      <button type="button" onClick={() => fileInput.current?.click()}>Upload SVG</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </details>
-          </fieldset>
-          <div className="spacer" />
-          <div className="control-panel-bottom">
-            <div className="section-header">plot</div>
-            <div className="section-body section-body__plot">
-              <PlanStatistics plan={plan} />
-              <TimeLeft
-                plan={plan}
-                progress={state.progress}
-                currentMotionStartedTime={currentMotionStartedTime}
-                paused={state.paused}
-              />
-              {planningError && <div className="placement-error" role="alert">{planningError}</div>}
-              <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || isLoadingFile} />
+            <footer className="canvas-status">
+              <span>{paper.x.toFixed(1)} × {paper.y.toFixed(1)} mm</span>
+              <span>{state.paths ? `${state.paths.length} source paths` : "No artwork"}</span>
+              <span>{panMode ? "Pan view" : state.planOptions.manualPlacement ? "Drag to position" : "Fit / original placement"}</span>
+            </footer>
+          </section>
+          <aside className="control-panel" aria-label="Inspector">
+            <div className="inspector-title">Inspector <span>DOCUMENT</span></div>
+            <div className="inspector-scroll">
+              <fieldset className="plot-settings" disabled={locked}>
+                <section className="inspector-section">
+                  <div className="section-header">Paper & placement</div>
+                  <div className="section-body">
+                    <PaperConfig state={state} />
+                    <PlacementControls state={state} />
+                  </div>
+                </section>
+                <section className="inspector-section">
+                  <div className="section-header">Layers</div>
+                  <div className="section-body"><LayerSelector state={state} /></div>
+                </section>
+                <details className="inspector-section advanced-settings">
+                  <summary className="section-header">Advanced settings</summary>
+                  <div className="section-body">
+                    <PlanConfig state={state} />
+                    <OriginOptions state={state} />
+                    <VisualizationOptions state={state} />
+                  </div>
+                </details>
+                <details className="inspector-section pen-settings">
+                  <summary className="section-header">Pen & machine</summary>
+                  <div className="section-body">
+                    <fieldset className="device-controls" disabled={!driver?.connected || (!IS_WEB && !state.deviceInfo?.path)}>
+                      <PenHeight state={state} driver={driver} />
+                      <MotorControl driver={driver} />
+                    </fieldset>
+                    <HardwareOptions state={state} driver={driver} />
+                    <ResetToDefaultsButton />
+                  </div>
+                </details>
+              </fieldset>
             </div>
-          </div>
-        </div>
-        <div className="preview-area" ref={previewArea}>
-          <PlanPreview
-            state={state}
-            previewSize={{ width: Math.max(0, previewSize.width - 40), height: Math.max(0, previewSize.height - 40) }}
-            plan={plan}
-            onDragging={setDragging}
-          />
-          <PlanLoader isPlanning={isPlanning} isLoadingFile={isLoadingFile} />
-          {showDragTarget && <DragTarget handleFile={handleFile} />}
-        </div>
+            <div className="control-panel-bottom">
+              <div className="section-header">Plot job</div>
+              <div className="section-body section-body__plot">
+                <PlanStatistics plan={plan} />
+                <TimeLeft plan={plan} progress={state.progress} currentMotionStartedTime={currentMotionStartedTime} paused={state.paused} />
+                {planningError && <div className="placement-error" role="alert">{planningError}</div>}
+                <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || isLoadingFile} />
+              </div>
+            </div>
+          </aside>
+        </main>
       </div>
     </DispatchContext.Provider>
-  );
-}
-
-function DragTarget({ handleFile }: { handleFile: (file: File) => void }) {
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleFileInputChange = React.useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) handleFile(file);
-    },
-    [handleFile],
-  );
-
-  return (
-    <div className="drag-target">
-      <div className="drag-target-message">
-        <span>Drag SVG here or</span>
-        <button type="button" onClick={() => fileInputRef.current.click()}>
-          Upload SVG
-        </button>{" "}
-        {/* the input for the system file picker can't be styled, so hide it and use this button*/}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".svg"
-          style={{ display: "none" }}
-          onChange={handleFileInputChange}
-        />
-      </div>
-    </div>
   );
 }
 
