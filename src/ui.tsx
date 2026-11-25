@@ -17,6 +17,7 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { layerStrokes, placeArtwork, previewInk } from "./artwork.js";
 import { PaperSize } from "./paper-size.js";
 import { Device, defaultPlanOptions, Plan, type PlanOptions, type TransferredMotion, XYMotion } from "./planning.js";
 import useComponentSize from "./useComponentSize.js";
@@ -33,6 +34,7 @@ import rotateDrawingIcon from "./icons/rotate-drawing.svg";
 const defaultVisualizationOptions = {
   penStrokeWidth: 0.5,
   colorPathsByStrokeOrder: false,
+  previewMode: "artwork" as "artwork" | "plot",
 };
 
 const initialState = {
@@ -575,6 +577,28 @@ function PlanPreview({
   const device = Device(state.planOptions.hardware);
   const strokeWidth = state.visualizationOptions.penStrokeWidth * device.stepsPerMm;
   const colorPathsByStrokeOrder = state.visualizationOptions.colorPathsByStrokeOrder;
+  const showArtwork = state.visualizationOptions.previewMode === "artwork" && state.progress === null;
+  const memoizedArtwork = useMemo(() => {
+    if (!showArtwork || !state.paths) return null;
+    return (
+      <g>
+        <title>Artwork preview before path optimization</title>
+        {placeArtwork(state.paths, state.planOptions).map((path) => (
+          <path
+            key={`${path.sourceIndex}:${path.fragmentIndex}`}
+            d={path.points.map(({ x, y }, i) => `${i === 0 ? "M" : "L"}${x} ${y}`).join(" ")}
+            style={{
+              stroke: previewInk(path.stroke, (value) => CSS.supports("color", value)) ?? "#777777",
+              strokeWidth: strokeWidth / device.stepsPerMm,
+              fill: "none",
+              strokeLinecap: "round",
+              strokeLinejoin: "round",
+            }}
+          />
+        ))}
+      </g>
+    );
+  }, [showArtwork, state.paths, state.planOptions, strokeWidth, device.stepsPerMm]);
   const memoizedPlanPreview = useMemo(() => {
     if (plan) {
       const palette = colorPathsByStrokeOrder
@@ -584,6 +608,7 @@ function PlanPreview({
         .filter((m) => m instanceof XYMotion)
         .map((m) => (m as XYMotion).points()) // Each XYMotion's block start points plus its final end point
         .filter((m) => m.length);
+      if (lines.length === 0) return null;
       return (
         <g transform={`scale(${1 / device.stepsPerMm})`}>
           <title>Pen home</title>
@@ -689,8 +714,8 @@ function PlanPreview({
   return (
     <div className="preview">
       <svg width={width} height={height} viewBox={`0 0 ${ps.size.x} ${ps.size.y}`}>
-        <title>Plot preview</title>
-        {memoizedPlanPreview}
+        <title>{showArtwork ? "Artwork preview" : "Plot preview"}</title>
+        {showArtwork ? memoizedArtwork : memoizedPlanPreview}
         {margins}
       </svg>
       {progressIndicator}
@@ -708,40 +733,68 @@ function PlanLoader({ isLoadingFile, isPlanning }: { isLoadingFile: boolean; isP
 
 function LayerSelector({ state }: { state: State }) {
   const dispatch = useContext(DispatchContext);
-
   const { layerMode } = state.planOptions;
   const layers = layerMode === "group" ? state.groupLayers : state.strokeLayers;
-  if (layers.length <= 1) {
-    return null;
-  }
-
   const selectedLayers =
     layerMode === "group" ? state.planOptions.selectedGroupLayers : state.planOptions.selectedStrokeLayers;
-  const layersChanged = (e: ChangeEvent<HTMLSelectElement>) => {
-    const selectedLayers = new Set([...e.target.selectedOptions].map((o) => o.value));
+  const swatches = useMemo(
+    () => new Map(layers.map((layer) => [layer, layerStrokes(state.paths ?? [], layerMode, layer)])),
+    [layers, state.paths, layerMode],
+  );
+  if (layers.length === 0 || layerMode === "all") return null;
+
+  const setLayers = (next: Set<string>) => {
     if (layerMode === "group") {
-      dispatch({ type: "SET_PLAN_OPTION", value: { selectedGroupLayers: selectedLayers } });
+      dispatch({ type: "SET_PLAN_OPTION", value: { selectedGroupLayers: next } });
     } else {
-      dispatch({ type: "SET_PLAN_OPTION", value: { selectedStrokeLayers: selectedLayers } });
+      dispatch({ type: "SET_PLAN_OPTION", value: { selectedStrokeLayers: next } });
     }
   };
+  const toggleLayer = (layer: string, checked: boolean) => {
+    const next = new Set(selectedLayers);
+    if (checked) next.add(layer);
+    else next.delete(layer);
+    setLayers(next);
+  };
+
   return (
     <div>
-      <label>
-        layers
-        <select
-          className="layer-select"
-          multiple={true}
-          value={[...selectedLayers]}
-          onChange={layersChanged}
-          size={3}
-          disabled={state.progress !== null}
-        >
-          {layers.map((layer) => (
-            <option key={layer}>{layer}</option>
-          ))}
-        </select>
-      </label>
+      <div className="layer-heading">layers ({selectedLayers.size}/{layers.length})</div>
+      <div className="layer-actions">
+        <button type="button" disabled={state.progress !== null} onClick={() => setLayers(new Set(layers))}>
+          All
+        </button>
+        <button type="button" disabled={state.progress !== null} onClick={() => setLayers(new Set())}>
+          None
+        </button>
+      </div>
+      <div className="layer-list">
+        {layers.map((layer) => {
+          const strokes = swatches.get(layer) ?? [];
+          const name = layer || (layerMode === "group" ? "(ungrouped)" : "(unknown stroke)");
+          return (
+            <label className="layer-row" key={layer}>
+              <input
+                type="checkbox"
+                checked={selectedLayers.has(layer)}
+                disabled={state.progress !== null}
+                onChange={(e) => toggleLayer(layer, e.target.checked)}
+              />
+              <span className="layer-swatches" title={strokes.map((stroke) => stroke || "Unknown").join(", ")}>
+                {strokes.slice(0, 4).map((stroke) => (
+                  <span
+                    key={stroke}
+                    className="layer-swatch"
+                    style={{ backgroundColor: previewInk(stroke, (value) => CSS.supports("color", value)) ?? "#777777" }}
+                  />
+                ))}
+                {strokes.length > 4 && <span className="layer-more">+{strokes.length - 4}</span>}
+              </span>
+              <span className="layer-name" title={name}>{name}</span>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -780,7 +833,7 @@ function PlotButtons({
         <button
           type="button"
           className={`plot-button ${state.progress !== null ? "plot-button--plotting" : ""}`}
-          disabled={plan === null || state.progress !== null}
+          disabled={plan === null || state.progress !== null || (state.planOptions.layerMode === "group" && state.planOptions.selectedGroupLayers.size === 0) || (state.planOptions.layerMode === "stroke" && state.planOptions.selectedStrokeLayers.size === 0)}
           onClick={() => plan && plot(plan)}
         >
           {plan && state.progress !== null ? "Plotting..." : "Plot"}
@@ -1196,6 +1249,18 @@ function Root() {
           <div className="section-body">
             <PaperConfig state={state} />
             <LayerSelector state={state} />
+            <div className="preview-mode-toggle">
+              <label>
+                preview
+                <select
+                  value={state.visualizationOptions.previewMode}
+                  onChange={(e) => dispatch({ type: "SET_VISUALIZATION_OPTION", value: { previewMode: e.target.value === "plot" ? "plot" : "artwork" } })}
+                >
+                  <option value="artwork">Artwork (colors)</option>
+                  <option value="plot">Plot (motion)</option>
+                </select>
+              </label>
+            </div>
           </div>
           <details>
             <summary className="section-header">more</summary>
