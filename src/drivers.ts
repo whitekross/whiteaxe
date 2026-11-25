@@ -21,7 +21,7 @@ export abstract class BaseDriver {
    */
   public onplan: (plan: Plan) => void = () => {};
 
-  abstract plot(plan: Plan): void;
+  abstract plot(plan: Plan): void | Promise<void>;
   abstract cancel(): void;
   abstract pause(): void;
   abstract resume(): void;
@@ -251,14 +251,13 @@ export class SaxiDriver extends BaseDriver {
     });
   }
 
-  public plot(plan: Plan) {
-    // const motions = plan.toTransferable();
-    // this.send({ c: "plot", p: { motions } });
-    fetch("/plot", {
+  public async plot(plan: Plan): Promise<void> {
+    const response = await fetch("/plot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(plan.serialize()),
     });
+    if (!response.ok) throw new Error(`Plot request rejected: ${response.status}`);
   }
 
   public cancel() {

@@ -30,4 +30,4 @@ Whiteaxe is an incremental extension of Saxi for AxiDraw. Preserve existing work
 
 ## Current gate
 
-Phases 0–3 approved and merged. Phase 3 passed 37 tests and 14 browser checks; physical testing deferred to Phase 5. Phase 3B Studio redesign is in review. Do not merge before GATE 3B approval.
+Phases 0–3B approved and merged (37 tests, 18 browser checks). Phase 4 guided multicolor is in review. Do not merge before GATE 4 approval. Physical testing deferred to Phase 5.
