@@ -232,6 +232,28 @@ try {
   assert.equal(await page.locator(".studio").getAttribute("data-theme"), "light");
   await page.screenshot({ path: join(output, "08-studio-light.png"), fullPage: true });
   pass("light and dark themes preserve white paper and artwork geometry");
+  // Load a deterministic, original 144-path artwork fixture through the actual upload control.
+  await page.locator('input[type="file"]').setInputFiles("docs/whiteaxe-fixtures/studio-generative.svg");
+  await waitForPaths(144);
+  await idle();
+  assert.equal(await page.locator(".file-name").innerText(), "studio-generative.svg");
+  assert.equal(await page.locator(".layer-row").count(), 4);
+  const complex = await snapshot();
+  assert.equal(new Set(complex.map(p => p.stroke)).size, 4);
+  await page.locator(".advanced-settings > summary").click();
+  await page.screenshot({ path: join(output, "09-generative-light.png"), fullPage: true });
+  const firstLayerInk = await page.locator(".layer-row").first().locator(".layer-swatch").evaluate(el => getComputedStyle(el).backgroundColor);
+  await page.locator(".layer-row").first().getByRole("checkbox").uncheck();
+  await waitForPaths(108);
+  await idle();
+  assert.deepEqual(await snapshot(), complex.filter(p => p.stroke !== firstLayerInk));
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await waitForPaths(144);
+  await idle();
+  assert.deepEqual(await snapshot(), complex);
+  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await page.screenshot({ path: join(output, "10-generative-dark.png"), fullPage: true });
+  pass("complex four-ink artwork imports, filters and restores without geometry changes");
   assert.deepEqual(errors, [], "uncaught browser errors");
   pass("no uncaught browser errors");
 } catch (error) {

@@ -27,9 +27,6 @@ import { formatDuration } from "./util.js";
 import "./style.css";
 import { type BaseDriver, type DeviceInfo, SaxiDriver, WebSerialDriver } from "./drivers.js";
 import type { Hardware } from "./ebb.js";
-import pathJoinRadiusIcon from "./icons/path-joining radius.svg";
-import pointJoinRadiusIcon from "./icons/point-joining radius.svg";
-import rotateDrawingIcon from "./icons/rotate-drawing.svg";
 
 const defaultVisualizationOptions = {
   penStrokeWidth: 0.5,
@@ -475,8 +472,10 @@ function PlacementControls({ state }: { state: State }) {
             <label>X (mm)<input type="number" step="0.1" value={Number(manual.x.toFixed(3))} onChange={(e) => change({ x: Number(e.target.value) })} /></label>
             <label>Y (mm)<input type="number" step="0.1" value={Number(manual.y.toFixed(3))} onChange={(e) => change({ y: Number(e.target.value) })} /></label>
           </div>
+          <div className="scale-line">
           <label>Scale (%)<input type="number" min="0.01" step="1" value={Number((manual.scale * 100).toFixed(3))} onChange={(e) => change({ scale: Number(e.target.value) / 100 })} /></label>
-          {size && <div className="placement-hint">Artwork: {size.x.toFixed(1)} × {size.y.toFixed(1)} mm</div>}
+          {size && <div className="artwork-size"><span>Artwork size</span><strong>{size.x.toFixed(1)} × {size.y.toFixed(1)} mm</strong></div>}
+          </div>
           <div className="placement-centers">
             {(["x", "y", "both"] as const).map((axis) => (
               <button type="button" key={axis} onClick={() => update({ manualPlacement: centerManual(paths, options, axis) })}>
@@ -484,12 +483,14 @@ function PlacementControls({ state }: { state: State }) {
               </button>
             ))}
           </div>
-          <div className="placement-hint">Drag on the Artwork preview. X/Y measure from paper origin to artwork's top-left bounds. Manual never crops.</div>
+          <div className="placement-hint">Drag the artwork or enter its top-left X/Y. No cropping in Manual.</div>
+          <div className="machine-travel">
           <div className="flex">
             <label>Machine travel X (mm)<input type="number" min="0" value={options.machineTravel?.x || ""} onChange={(e) => update({ machineTravel: { x: Number(e.target.value), y: options.machineTravel?.y ?? 0 } })} /></label>
             <label>Machine travel Y (mm)<input type="number" min="0" value={options.machineTravel?.y || ""} onChange={(e) => update({ machineTravel: { x: options.machineTravel?.x ?? 0, y: Number(e.target.value) } })} /></label>
           </div>
-          <div className="placement-hint">Enter the measured usable machine travel from its physical origin, not the paper size. Required each session.</div>
+          <div className="placement-hint">Measured machine travel from its origin, required each session; not paper dimensions.</div>
+          </div>
         </>
       )}
     </div>
@@ -520,7 +521,7 @@ function PaperConfig({ state }: { state: State }) {
     }) || "Custom";
   return (
     <div>
-      <select value={paperSizeName} onChange={setPaperSize}>
+      <select aria-label="Paper format" value={paperSizeName} onChange={setPaperSize}>
         {Object.keys(PaperSize.standard).map((name) => (
           <option key={name}>{name}</option>
         ))}
@@ -552,11 +553,10 @@ function PaperConfig({ state }: { state: State }) {
           />
         </label>
       </div>
-      <div>
+      <div className="paper-adjustments">
         <label>
-          rotate drawing (degrees)
-          <div className="horizontal-labels">
-            <img src={rotateDrawingIcon} alt="rotate drawing (degrees)" />
+          Rotation (°)
+          <div>
             <input
               type="number"
               min="-90"
@@ -577,9 +577,8 @@ function PaperConfig({ state }: { state: State }) {
             />
           </div>
         </label>
-      </div>
       <label>
-        margin (mm)
+        Margin (mm)
         <input
           type="number"
           value={state.planOptions.marginMm}
@@ -588,6 +587,7 @@ function PaperConfig({ state }: { state: State }) {
           onChange={(e) => dispatch({ type: "SET_PLAN_OPTION", value: { marginMm: Number(e.target.value) } })}
         />
       </label>
+      </div>
     </div>
   );
 }
@@ -934,7 +934,8 @@ function LayerSelector({ state }: { state: State }) {
 
   return (
     <div>
-      <div className="layer-heading">layers ({selectedLayers.size}/{layers.length})</div>
+      <div className="layer-toolbar">
+      <div className="layer-heading">{selectedLayers.size} of {layers.length} selected</div>
       <div className="layer-actions">
         <button type="button" disabled={state.progress !== null} onClick={() => setLayers(new Set(layers))}>
           All
@@ -942,6 +943,7 @@ function LayerSelector({ state }: { state: State }) {
         <button type="button" disabled={state.progress !== null} onClick={() => setLayers(new Set())}>
           None
         </button>
+      </div>
       </div>
       <div className="layer-list">
         {layers.map((layer) => {
@@ -1087,9 +1089,9 @@ function PlanConfig({ state }: { state: State }) {
           </label>
         ) : null}
       </form>
-      <div className="horizontal-labels">
+      <div className="flex">
         <label title="point-joining radius (mm)">
-          <img src={pointJoinRadiusIcon} alt="point-joining radius (mm)" />
+          Point join (mm)
           <input
             type="number"
             value={state.planOptions.pointJoinRadius}
@@ -1099,7 +1101,7 @@ function PlanConfig({ state }: { state: State }) {
           />
         </label>
         <label title="path-joining radius (mm)">
-          <img src={pathJoinRadiusIcon} alt="path-joining radius (mm)" />
+          Path join (mm)
           <input
             type="number"
             value={state.planOptions.pathJoinRadius}
@@ -1408,8 +1410,8 @@ function Root() {
         <header className="studio-header">
           <div className="studio-brand">whiteaxe<span>.</span><small>STUDIO</small></div>
           <div className="file-controls">
-            <button type="button" className="open-file" disabled={locked || isLoadingFile} onClick={() => fileInput.current?.click()}>
-              <span aria-hidden="true">↗</span> Open SVG
+            <button type="button" className="open-file studio-tool" disabled={locked || isLoadingFile} onClick={() => fileInput.current?.click()}>
+              <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16" fill="none"><path d="M2.5 5.5h5l1.6 2H17l-2 8H2.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" fill="none"/></svg> Open SVG
             </button>
             <input
               ref={fileInput}
@@ -1451,8 +1453,8 @@ function Root() {
                 </select>
               </div>
               <div className="view-controls">
-                <button type="button" aria-pressed={!panMode} disabled={dragging} onClick={() => setPanMode(false)} title="Move artwork in Manual mode">Move</button>
-                <button type="button" aria-pressed={panMode} disabled={dragging} onClick={() => setPanMode(true)} title="Pan the viewport without moving artwork">Pan</button>
+                <button type="button" className="studio-tool" aria-pressed={!panMode} disabled={dragging} onClick={() => setPanMode(false)} title="Move artwork in Manual mode"><svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><path d="M10 2v16M2 10h16M7 5l3-3 3 3M7 15l3 3 3-3M5 7l-3 3 3 3M15 7l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round"/></svg>Move</button>
+                <button type="button" className="studio-tool" aria-pressed={panMode} disabled={dragging} onClick={() => setPanMode(true)} title="Pan the viewport without moving artwork"><svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><path d="M5 10V5a1 1 0 0 1 2 0v4-6a1 1 0 0 1 2 0v6-5a1 1 0 0 1 2 0v5-3a1 1 0 0 1 2 0v6l2-2c1-1 2 0 1 1l-3 5H7l-4-5c-1-2 1-2 2-1z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round"/></svg>Pan</button>
               </div>
               <div className="zoom-controls">
                 <button type="button" aria-label="Zoom out" disabled={dragging || zoom <= 0.5} onClick={() => changeZoom(zoom / 1.25)}>−</button>
