@@ -1006,7 +1006,7 @@ function ResetToDefaultsButton() {
   const onClick = () => {
     // Clear all user settings that have been saved and reset to the defaults
     window.localStorage.removeItem("planOptions");
-    dispatch({ type: "SET_PLAN_OPTION", value: { ...defaultPlanOptions } });
+    dispatch({ type: "SET_PLAN_OPTION", value: { ...defaultPlanOptions, manualPlacement: undefined, machineTravel: undefined } });
   };
 
   return (
@@ -1288,6 +1288,7 @@ function Root() {
 
   const handleFile = React.useCallback(
     (file: File) => {
+      if (state.progress !== null || dragging) return;
       setIsLoadingFile(true);
       setPlan(null);
 
@@ -1301,7 +1302,7 @@ function Root() {
       };
       reader.readAsText(file);
     },
-    [setPlan],
+    [setPlan, state.progress, dragging],
   );
 
   useEffect(() => {

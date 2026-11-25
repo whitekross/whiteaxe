@@ -1,6 +1,6 @@
 # Whiteaxe roadmap
 
-Status: Phase 0 complete. Official fork created; Phase 1 baseline verification pending. No builds or hardware tests performed yet.
+Status: Phases 0–2 complete and approved. Phase 3 manual placement in review. Builds and browser tests passed for Phase 2; no hardware tests performed yet.
 
 ## Phase 0 — Feasibility and scope
 
@@ -28,7 +28,7 @@ GATE 1: reproducible baseline and feature inventory; no functional changes, no r
 - Use canonical transformed geometry for preview; do not display unsupported fills as plottable strokes.
 - Test color mapping, layer visibility, grouped/mixed-color files, white strokes and alignment when toggling layers.
 
-GATE 2: interactive color preview and swatches, original plot view preserved, tests pass.
+GATE 2: approved and merged. CI run 45598286011: 28 tests and eight Chrome checks passed; original Plot view preserved.
 
 ## Phase 3 — Manual placement
 

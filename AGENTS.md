@@ -30,4 +30,4 @@ Whiteaxe is an incremental extension of Saxi for AxiDraw. Preserve existing work
 
 ## Current gate
 
-Phase 0 feasibility assessment is complete. The official GitHub fork preserves upstream history and license. Phase 1 is in progress: the starting revision is recorded in README.md; installation, build, automated tests and runtime checks are still pending. This PR is documentation only.
+Phases 0–2 approved and merged. Phase 2 passed 28 unit/integration tests and eight real-browser checks; physical testing remains deferred to Phase 5. Phase 3 manual placement is in review; do not merge before GATE 3 approval.
