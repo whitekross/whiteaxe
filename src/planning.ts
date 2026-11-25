@@ -5,7 +5,16 @@ import { type Vec2, vadd, vdot, vlen, vmul, vnorm, vsub } from "./vec.js";
 
 const epsilon = 1e-9;
 
+export interface ManualPlacement {
+  x: number;
+  y: number;
+  scale: number;
+}
+
 export interface PlanOptions {
+  // Absent preserves the original fitPage / cropToMargins behavior.
+  manualPlacement?: ManualPlacement;
+  machineTravel?: Vec2;
   paperSize: PaperSize;
   marginMm: number;
   selectedStrokeLayers: Set<string>;

@@ -1,6 +1,6 @@
 # Phase 2 — artwork colors and layer indicators
 
-Implemented on the feature branch. Initial CI passed: 28 tests passed, 1 inherited skip; production and WebSerial builds and CLI help passed. The same 10 inherited advisory type diagnostics remain. Browser smoke test added; results pending.
+Implemented on the feature branch. Initial CI passed: 28 tests passed, 1 inherited skip; production and WebSerial builds and CLI help passed. The same 10 inherited advisory type diagnostics remain. Browser smoke test passed in CI run 45598286011 (eight checks, zero browser errors); Phase 2 approved and merged.
 
 - Artwork is the default preview; the original Plot motion view remains selectable next to the layers. During plotting the technical view is shown automatically.
 - The Artwork view draws source strokes on paper-space geometry before sorting, deduplication, short-path removal and path joining. It is not an exact simulation of ink deposition or a replacement for the motion preview.
@@ -8,7 +8,7 @@ Implemented on the feature branch. Initial CI passed: 28 tests passed, 1 inherit
 - Layer checkboxes preserve stroke/group modes, offer all/none controls, and show up to four distinct colors plus a count for mixed groups. Unknown paint uses neutral gray; white swatches have a visible border. The actual plotted geometry is not dropped based on unsupported paint.
 - New regression tests cover clipping identity, the actual planner, selection without recentering, group colors, units, empty selection and color fallback.
 
-No transport, motion algorithm, package dependencies or upstream license changes. Manual positioning is deferred to Phase 3. Browser and hardware verification are not claimed.
+No transport, motion algorithm, package dependencies or upstream license changes. Manual positioning is deferred to Phase 3. Browser smoke checks passed; hardware verification remains pending.
 
 ## Browser smoke test
 

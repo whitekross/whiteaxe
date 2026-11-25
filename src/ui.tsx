@@ -17,9 +17,9 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { layerStrokes, placeArtwork, previewInk } from "./artwork.js";
+import { centerManual, layerStrokes, manualDimensions, manualPlacementError, placeArtwork, previewInk, startManual } from "./artwork.js";
 import { PaperSize } from "./paper-size.js";
-import { Device, defaultPlanOptions, Plan, type PlanOptions, type TransferredMotion, XYMotion } from "./planning.js";
+import { Device, defaultPlanOptions, Plan, type ManualPlacement, type PlanOptions, type TransferredMotion, XYMotion } from "./planning.js";
 import useComponentSize from "./useComponentSize.js";
 
 import { formatDuration } from "./util.js";
@@ -65,6 +65,10 @@ const initialState = {
 const persistedPlanOptions = JSON.parse(window.localStorage.getItem("planOptions") ?? "{}");
 initialState.planOptions = { ...initialState.planOptions, ...persistedPlanOptions };
 initialState.planOptions.paperSize = new PaperSize(initialState.planOptions.paperSize.size);
+// Machine travel must be reconfirmed per session; layer Sets are rebuilt on SVG import.
+initialState.planOptions.machineTravel = undefined;
+initialState.planOptions.selectedStrokeLayers = new Set();
+initialState.planOptions.selectedGroupLayers = new Set();
 
 type State = typeof initialState;
 
@@ -98,7 +102,15 @@ const DispatchContext = React.createContext<Dispatcher>(nullDispatch);
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_PLAN_OPTION":
-      return { ...state, planOptions: { ...state.planOptions, ...action.value } };
+      if (state.progress !== null) return state;
+      return {
+        ...state,
+        planOptions: {
+          ...state.planOptions,
+          ...action.value,
+          ...(action.value.hardware && action.value.hardware !== state.planOptions.hardware ? { machineTravel: undefined } : {}),
+        },
+      };
     case "SET_VISUALIZATION_OPTION":
       return { ...state, visualizationOptions: { ...state.visualizationOptions, ...action.value } };
     case "SET_DEVICE_INFO":
@@ -106,6 +118,7 @@ function reducer(state: State, action: Action): State {
     case "SET_PAUSED":
       return { ...state, paused: action.value };
     case "SET_PATHS": {
+      if (state.progress !== null) return state;
       const { paths, strokeLayers, selectedStrokeLayers, groupLayers, selectedGroupLayers, layerMode } = action;
       return {
         ...state,
@@ -150,13 +163,20 @@ function attemptRejigger(previousOptions: PlanOptions, newOptions: PlanOptions, 
 const usePlan = (paths: Path[] | null, planOptions: PlanOptions) => {
   const [isPlanning, setIsPlanning] = useState(false);
   const [latestPlan, setPlan] = useState<Plan | null>(null);
+  const [ready, setReady] = useState<{ paths: Path[]; options: PlanOptions } | null>(null);
+  const [workerError, setWorkerError] = useState<string | null>(null);
+  const placementError = useMemo(() => paths ? manualPlacementError(paths, planOptions) : null, [paths, planOptions]);
 
   const lastPaths = useRef<Path[]>(null);
   const lastPlan = useRef<Plan>(null);
   const lastPlanOptions = useRef<PlanOptions>(null);
 
   useEffect(() => {
-    if (!paths) {
+    setWorkerError(null);
+    if (!paths || placementError) {
+      setReady(null);
+      setIsPlanning(false);
+      if (placementError) setPlan(null);
       return () => {};
     }
     if (lastPlan.current !== null && lastPaths.current === paths) {
@@ -165,10 +185,10 @@ const usePlan = (paths: Path[] | null, planOptions: PlanOptions) => {
         setPlan(rejiggered);
         lastPlan.current = rejiggered;
         lastPlanOptions.current = planOptions;
+        setReady({ paths, options: planOptions });
         return () => {};
       }
     }
-    lastPaths.current = paths;
     const worker = new Worker("background-planner.js");
     setIsPlanning(true);
     console.time("posting to worker");
@@ -182,18 +202,34 @@ const usePlan = (paths: Path[] | null, planOptions: PlanOptions) => {
       console.timeEnd("deserializing");
       setPlan(plan);
       lastPlan.current = plan;
+      lastPaths.current = paths;
       lastPlanOptions.current = planOptions;
+      setReady({ paths, options: planOptions });
+      setIsPlanning(false);
+    };
+    const onError = (event: ErrorEvent) => {
+      setWorkerError(event.message || "Motion planning failed.");
+      setPlan(null);
+      setReady(null);
       setIsPlanning(false);
     };
     worker.addEventListener("message", listener);
+    worker.addEventListener("error", onError);
     return () => {
       worker.removeEventListener("message", listener);
+      worker.removeEventListener("error", onError);
       worker.terminate();
       setIsPlanning(false);
     };
-  }, [paths, planOptions]);
+  }, [paths, planOptions, placementError]);
 
-  return { isPlanning, plan: latestPlan, setPlan };
+  const stale = !!paths && (ready?.paths !== paths || ready?.options !== planOptions);
+  return {
+    isPlanning: !placementError && !workerError && (isPlanning || stale),
+    plan: latestPlan,
+    setPlan,
+    planningError: placementError ?? workerError,
+  };
 };
 
 const setPaths = (paths: Path[]): Action => {
@@ -405,6 +441,61 @@ function SwapPaperSizesButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function PlacementControls({ state }: { state: State }) {
+  const dispatch = useContext(DispatchContext);
+  const options = state.planOptions;
+  const manual = options.manualPlacement;
+  const paths = state.paths ?? [];
+  const update = (value: Partial<PlanOptions>) => dispatch({ type: "SET_PLAN_OPTION", value });
+  const change = (value: Partial<ManualPlacement>) => {
+    if (manual) update({ manualPlacement: { ...manual, ...value } });
+  };
+  const size = manualDimensions(paths, options);
+  return (
+    <div className="placement-controls">
+      <label>
+        placement
+        <select
+          value={manual ? "manual" : options.fitPage ? "fit" : "original"}
+          onChange={(e) => {
+            if (e.target.value === "manual") {
+              update({ manualPlacement: startManual(paths, options) });
+              dispatch({ type: "SET_VISUALIZATION_OPTION", value: { previewMode: "artwork" } });
+            } else update({ manualPlacement: undefined, fitPage: e.target.value === "fit" });
+          }}
+        >
+          <option value="fit">Fit to paper</option>
+          <option value="original">Original size</option>
+          <option value="manual">Manual</option>
+        </select>
+      </label>
+      {manual && (
+        <>
+          <div className="flex">
+            <label>X (mm)<input type="number" step="0.1" value={Number(manual.x.toFixed(3))} onChange={(e) => change({ x: Number(e.target.value) })} /></label>
+            <label>Y (mm)<input type="number" step="0.1" value={Number(manual.y.toFixed(3))} onChange={(e) => change({ y: Number(e.target.value) })} /></label>
+          </div>
+          <label>Scale (%)<input type="number" min="0.01" step="1" value={Number((manual.scale * 100).toFixed(3))} onChange={(e) => change({ scale: Number(e.target.value) / 100 })} /></label>
+          {size && <div className="placement-hint">Artwork: {size.x.toFixed(1)} × {size.y.toFixed(1)} mm</div>}
+          <div className="placement-centers">
+            {(["x", "y", "both"] as const).map((axis) => (
+              <button type="button" key={axis} onClick={() => update({ manualPlacement: centerManual(paths, options, axis) })}>
+                {axis === "both" ? "Center both" : axis === "x" ? "Center X" : "Center Y"}
+              </button>
+            ))}
+          </div>
+          <div className="placement-hint">Drag on the Artwork preview. X/Y measure from paper origin to artwork's top-left bounds. Manual never crops.</div>
+          <div className="flex">
+            <label>Machine travel X (mm)<input type="number" min="0" value={options.machineTravel?.x || ""} onChange={(e) => update({ machineTravel: { x: Number(e.target.value), y: options.machineTravel?.y ?? 0 } })} /></label>
+            <label>Machine travel Y (mm)<input type="number" min="0" value={options.machineTravel?.y || ""} onChange={(e) => update({ machineTravel: { x: options.machineTravel?.x ?? 0, y: Number(e.target.value) } })} /></label>
+          </div>
+          <div className="placement-hint">Enter the measured usable machine travel from its physical origin, not the paper size. Required each session.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PaperConfig({ state }: { state: State }) {
   const dispatch = useContext(DispatchContext);
   const landscape = state.planOptions.paperSize.isLandscape;
@@ -568,22 +659,44 @@ function PlanPreview({
   state,
   previewSize,
   plan,
+  onDragging,
 }: {
   state: State;
   previewSize: { width: number; height: number };
   plan: Plan | null;
+  onDragging: (value: boolean) => void;
 }) {
+  const dispatch = useContext(DispatchContext);
+  const [draft, setDraft] = useState<ManualPlacement | null>(null);
+  const drag = useRef<{ pointer: number; startX: number; startY: number; initial: ManualPlacement } | null>(null);
+  const manual = state.planOptions.manualPlacement;
   const ps = state.planOptions.paperSize;
   const device = Device(state.planOptions.hardware);
   const strokeWidth = state.visualizationOptions.penStrokeWidth * device.stepsPerMm;
   const colorPathsByStrokeOrder = state.visualizationOptions.colorPathsByStrokeOrder;
   const showArtwork = state.visualizationOptions.previewMode === "artwork" && state.progress === null;
+  const canDrag = showArtwork && !!manual && !!state.paths;
+  const toPaper = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return { x: (e.clientX - rect.left) * ps.size.x / rect.width, y: (e.clientY - rect.top) * ps.size.y / rect.height };
+  };
+  const moved = (e: React.PointerEvent<SVGSVGElement>) => {
+    const active = drag.current;
+    if (!active || active.pointer !== e.pointerId) return null;
+    const p = toPaper(e);
+    return { ...active.initial, x: active.initial.x + p.x - active.startX, y: active.initial.y + p.y - active.startY };
+  };
+  const stopDrag = () => {
+    drag.current = null;
+    setDraft(null);
+    onDragging(false);
+  };
   const memoizedArtwork = useMemo(() => {
     if (!showArtwork || !state.paths) return null;
     return (
       <g>
         <title>Artwork preview before path optimization</title>
-        {placeArtwork(state.paths, state.planOptions).map((path) => (
+        {placeArtwork(state.paths, draft ? { ...state.planOptions, manualPlacement: draft } : state.planOptions).map((path) => (
           <path
             key={`${path.sourceIndex}:${path.fragmentIndex}`}
             d={path.points.map(({ x, y }, i) => `${i === 0 ? "M" : "L"}${x} ${y}`).join(" ")}
@@ -598,7 +711,7 @@ function PlanPreview({
         ))}
       </g>
     );
-  }, [showArtwork, state.paths, state.planOptions, strokeWidth, device.stepsPerMm]);
+  }, [showArtwork, state.paths, state.planOptions, strokeWidth, device.stepsPerMm, draft]);
   const memoizedPlanPreview = useMemo(() => {
     if (plan) {
       const palette = colorPathsByStrokeOrder
@@ -713,7 +826,32 @@ function PlanPreview({
   );
   return (
     <div className="preview">
-      <svg width={width} height={height} viewBox={`0 0 ${ps.size.x} ${ps.size.y}`}>
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${ps.size.x} ${ps.size.y}`}
+        className={canDrag ? "manual-paper" : undefined}
+        onPointerDown={(e) => {
+          if (!canDrag || !manual || e.button !== 0) return;
+          const p = toPaper(e);
+          if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          drag.current = { pointer: e.pointerId, startX: p.x, startY: p.y, initial: manual };
+          setDraft(manual);
+          onDragging(true);
+        }}
+        onPointerMove={(e) => {
+          const next = moved(e);
+          if (next) setDraft(next);
+        }}
+        onPointerUp={(e) => {
+          const next = moved(e);
+          if (next) dispatch({ type: "SET_PLAN_OPTION", value: { manualPlacement: next } });
+          stopDrag();
+        }}
+        onPointerCancel={stopDrag}
+        onLostPointerCapture={stopDrag}
+      >
         <title>{showArtwork ? "Artwork preview" : "Plot preview"}</title>
         {showArtwork ? memoizedArtwork : memoizedPlanPreview}
         {margins}
@@ -804,23 +942,25 @@ function PlotButtons({
   plan,
   isPlanning,
   driver,
+  blocked,
 }: {
   state: State;
   plan: Plan | null;
   isPlanning: boolean;
-  driver: BaseDriver;
+  driver: BaseDriver | null;
+  blocked: boolean;
 }) {
   function cancel() {
-    driver.cancel();
+    driver?.cancel();
   }
   function pause() {
-    driver.pause();
+    driver?.pause();
   }
   function resume() {
-    driver.resume();
+    driver?.resume();
   }
   function plot(plan: Plan) {
-    driver.plot(plan);
+    if (!blocked && driver?.connected) driver.plot(plan);
   }
 
   return (
@@ -833,7 +973,7 @@ function PlotButtons({
         <button
           type="button"
           className={`plot-button ${state.progress !== null ? "plot-button--plotting" : ""}`}
-          disabled={plan === null || state.progress !== null || (state.planOptions.layerMode === "group" && state.planOptions.selectedGroupLayers.size === 0) || (state.planOptions.layerMode === "stroke" && state.planOptions.selectedStrokeLayers.size === 0)}
+          disabled={blocked || !driver?.connected || plan === null || state.progress !== null || (state.planOptions.layerMode === "group" && state.planOptions.selectedGroupLayers.size === 0) || (state.planOptions.layerMode === "stroke" && state.planOptions.selectedStrokeLayers.size === 0)}
           onClick={() => plan && plot(plan)}
         >
           {plan && state.progress !== null ? "Plotting..." : "Plot"}
@@ -866,7 +1006,7 @@ function ResetToDefaultsButton() {
   const onClick = () => {
     // Clear all user settings that have been saved and reset to the defaults
     window.localStorage.removeItem("planOptions");
-    dispatch({ type: "SET_PLAN_OPTION", value: { ...defaultPlanOptions } });
+    dispatch({ type: "SET_PLAN_OPTION", value: { ...defaultPlanOptions, manualPlacement: undefined, machineTravel: undefined } });
   };
 
   return (
@@ -899,15 +1039,7 @@ function PlanConfig({ state }: { state: State }) {
           />
           layer by group
         </label>
-        <label className="flex-checkbox" title="Re-scale and position the image to fit on the page">
-          <input
-            type="checkbox"
-            checked={state.planOptions.fitPage}
-            onChange={(e) => dispatch({ type: "SET_PLAN_OPTION", value: { fitPage: !!e.target.checked } })}
-          />
-          fit page
-        </label>
-        {!state.planOptions.fitPage ? (
+        {!state.planOptions.manualPlacement && !state.planOptions.fitPage ? (
           <label className="flex-checkbox" title="Remove lines that fall outside the margins">
             <input
               type="checkbox"
@@ -1114,7 +1246,8 @@ function Root() {
   }, [isDriverConnected]);
 
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { isPlanning, plan, setPlan } = usePlan(state.paths, state.planOptions);
+  const { isPlanning, plan, setPlan, planningError } = usePlan(state.paths, state.planOptions);
+  const [dragging, setDragging] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
 
   useEffect(() => {
@@ -1155,6 +1288,7 @@ function Root() {
 
   const handleFile = React.useCallback(
     (file: File) => {
+      if (state.progress !== null || dragging) return;
       setIsLoadingFile(true);
       setPlan(null);
 
@@ -1168,7 +1302,7 @@ function Root() {
       };
       reader.readAsText(file);
     },
-    [setPlan],
+    [setPlan, state.progress, dragging],
   );
 
   useEffect(() => {
@@ -1212,7 +1346,7 @@ function Root() {
 
   const previewArea = useRef(null);
   const previewSize = useComponentSize(previewArea);
-  const showDragTarget = !plan && !isLoadingFile && !isPlanning;
+  const showDragTarget = !state.paths && !plan && !isLoadingFile && !isPlanning;
 
   return (
     <DispatchContext.Provider value={dispatch}>
@@ -1238,6 +1372,7 @@ function Root() {
               hardware={(driver as WebSerialDriver)?.ebb?.hardware ?? state.planOptions.hardware}
             />
           )}
+          <fieldset className="plot-settings" disabled={state.progress !== null || dragging}>
           <div className="section-header">pen</div>
           <div className="section-body">
             <PenHeight state={state} driver={driver} />
@@ -1248,6 +1383,7 @@ function Root() {
           <div className="section-header">paper</div>
           <div className="section-body">
             <PaperConfig state={state} />
+            <PlacementControls state={state} />
             <LayerSelector state={state} />
             <div className="preview-mode-toggle">
               <label>
@@ -1270,6 +1406,7 @@ function Root() {
               <VisualizationOptions state={state} />
             </div>
           </details>
+          </fieldset>
           <div className="spacer" />
           <div className="control-panel-bottom">
             <div className="section-header">plot</div>
@@ -1281,7 +1418,8 @@ function Root() {
                 currentMotionStartedTime={currentMotionStartedTime}
                 paused={state.paused}
               />
-              <PlotButtons plan={plan} isPlanning={isPlanning} state={state} driver={driver} />
+              {planningError && <div className="placement-error" role="alert">{planningError}</div>}
+              <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || isLoadingFile} />
             </div>
           </div>
         </div>
@@ -1290,6 +1428,7 @@ function Root() {
             state={state}
             previewSize={{ width: Math.max(0, previewSize.width - 40), height: Math.max(0, previewSize.height - 40) }}
             plan={plan}
+            onDragging={setDragging}
           />
           <PlanLoader isPlanning={isPlanning} isLoadingFile={isLoadingFile} />
           {showDragTarget && <DragTarget handleFile={handleFile} />}

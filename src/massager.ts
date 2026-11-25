@@ -1,7 +1,7 @@
 import type { Path } from "flatten-svg";
 import { elideShorterThan, merge as joinNearbyPaths, reorder as sortPaths } from "optimize-paths";
 import { Device, type Plan, type PlanOptions, plan } from "./planning.js";
-import { placeArtwork } from "./artwork.js";
+import { manualPlacementError, placeArtwork } from "./artwork.js";
 import { dedupPoints } from "./util.js";
 import { vmul } from "./vec.js";
 
@@ -12,6 +12,8 @@ import { vmul } from "./vec.js";
  * @returns
  */
 export function replan(inPaths: Path[], planOptions: PlanOptions): Plan {
+  const placementError = manualPlacementError(inPaths, planOptions);
+  if (placementError) throw new Error(placementError);
   let paths = placeArtwork(inPaths, planOptions).map((path) => path.points);
   const device = Device(planOptions.hardware);
 

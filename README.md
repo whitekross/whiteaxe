@@ -2,7 +2,7 @@
 
 Whiteaxe is an independent, in-development fork of [alexrudd2/saxi](https://github.com/alexrudd2/saxi), which continues [Jeremy Rose's original Saxi](https://github.com/nornagon/saxi). It aims to extend Saxi's AxiDraw workflow with free SVG placement, a color artwork preview and colored layer indicators while preserving existing plotting features.
 
-**Status:** Phase 1 baseline verification is pending. No Whiteaxe plotting features have been implemented. The fork starts from Saxi 0.17.1, commit [f0810b10c3c5](https://github.com/whitekross/whiteaxe/commit/f0810b10c3c52b2671457684dc5e52f8edd6cd1d). The inherited package requires Node.js >=22; use npm and the existing lockfile. The original instructions below are retained for reference and may describe older Node versions or upstream installation commands. Whiteaxe is not separately published to npm.
+**Status:** Phase 2 artwork colors and layer indicators are implemented and verified in CI. Phase 3 manual placement is in review. The fork starts from Saxi 0.17.1, commit [f0810b10c3c5](https://github.com/whitekross/whiteaxe/commit/f0810b10c3c52b2671457684dc5e52f8edd6cd1d). The inherited package requires Node.js >=22; use npm and the existing lockfile. The original instructions below are retained for reference and may describe older Node versions or upstream installation commands. Whiteaxe is not separately published to npm.
 
 ## Project documents
 
