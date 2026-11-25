@@ -837,13 +837,13 @@ function PlanPreview({
   return (
     <div className="paper-frame">
       <div className="ruler ruler-x" aria-hidden="true">
-        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.x / 20) + 1)) }, (_, i) => (
-          <span key={i * 20} style={{ left: `${i * 20 / ps.size.x * 100}%` }}>{i * 20}</span>
+        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.x / 20) + 1)) }, (_, i) => i * 20).map((mm) => (
+          <span key={mm} style={{ left: `${mm / ps.size.x * 100}%` }}>{mm}</span>
         ))}
       </div>
       <div className="ruler ruler-y" aria-hidden="true">
-        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.y / 20) + 1)) }, (_, i) => (
-          <span key={i * 20} style={{ top: `${i * 20 / ps.size.y * 100}%` }}>{i * 20}</span>
+        {Array.from({ length: Math.min(100, Math.max(0, Math.floor(ps.size.y / 20) + 1)) }, (_, i) => i * 20).map((mm) => (
+          <span key={mm} style={{ top: `${mm / ps.size.y * 100}%` }}>{mm}</span>
         ))}
       </div>
       <div className="preview">

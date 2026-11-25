@@ -573,8 +573,8 @@ summary:focus {
 .studio .layer-heading { font-size: 11px; color: var(--muted); }
 .studio .layer-actions button { font-size: 11px; min-height: 27px; }
 .studio .layer-list { border: 1px solid var(--line); border-radius: 6px; background: var(--surface-subtle); max-height: 180px; padding: 4px; }
-.studio .layer-row { gap: 8px; padding: 3px 5px; color: var(--ink); }
-.studio .layer-row:hover { background: var(--surface); border-radius: 4px; }
+.studio .section-body .layer-row { gap: 8px; padding: 3px 5px; color: var(--ink); }
+.studio .section-body .layer-row:hover { background: var(--surface); border-radius: 4px; }
 .studio .layer-swatch { border-color: #9299a3; }
 .studio .control-panel-bottom { position: static; width: auto; padding: 0 0 10px; border-top: 1px solid var(--line); background: var(--surface); }
 .studio .control-panel-bottom .section-header { padding-top: 12px; }
@@ -607,3 +607,6 @@ summary:focus {
   .connection-status > span:not(.connection-dot), .file-name { display: none; }
   .header-right { gap: 5px; }
 }
+
+.selection-bounds { pointer-events: none; }
+.advanced-settings, .pen-settings { min-width: 0; }
