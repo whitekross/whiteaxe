@@ -2,7 +2,8 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist/ui"
+    "outDir": "dist/ui",
+    "skipLibCheck": true
   },
   "files": ["src/ui.tsx", "src/global.d.ts"]
 }

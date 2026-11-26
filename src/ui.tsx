@@ -279,7 +279,7 @@ const setPaths = (paths: Path[]): Action => {
   };
 };
 
-function PenHeight({ state, driver }: { state: State; driver: BaseDriver }) {
+function PenHeight({ state, driver }: { state: State; driver: BaseDriver | null }) {
   const { penUpHeight, penDownHeight, hardware } = state.planOptions;
   const dispatch = useContext(DispatchContext);
   const setPenUpHeight = (x: number) => dispatch({ type: "SET_PLAN_OPTION", value: { penUpHeight: x } });
@@ -288,11 +288,11 @@ function PenHeight({ state, driver }: { state: State; driver: BaseDriver }) {
 
   const penUp = () => {
     const height = device.penPctToPos(penUpHeight);
-    driver.setPenHeight(height, 1000);
+    driver?.setPenHeight(height, 1000);
   };
   const penDown = () => {
     const height = device.penPctToPos(penDownHeight);
-    driver.setPenHeight(height, 1000);
+    driver?.setPenHeight(height, 1000);
   };
   return (
     <Fragment>
@@ -621,10 +621,10 @@ function PaperConfig({ state }: { state: State }) {
   );
 }
 
-function MotorControl({ driver }: { driver: BaseDriver }) {
+function MotorControl({ driver }: { driver: BaseDriver | null }) {
   return (
     <div>
-      <button type="button" onClick={() => driver.limp()}>
+      <button type="button" onClick={() => driver?.limp()}>
         disengage motors
       </button>
     </div>
@@ -1341,7 +1341,7 @@ function PortSelector({ driver, setDriver, hardware }: PortSelectorProps) {
             });
             setDriver(await WebSerialDriver.connect(port, hardware));
           } catch (e) {
-            alert(`Failed to connect to serial device: ${e.message}`);
+            alert(`Failed to connect to serial device: ${e instanceof Error ? e.message : String(e)}`);
             console.error(e);
           } finally {
             setInitializing(false);
@@ -1370,6 +1370,8 @@ function Root() {
   const { isPlanning, plan, setPlan, planningError } = usePlan(state.paths, state.planOptions);
   const [dragging, setDragging] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const importVersion = useRef(0);
   const [fileName, setFileName] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => window.localStorage.getItem("whiteaxe-theme") === "dark" ? "dark" : "light");
   const [zoom, setZoom] = useState(1);
@@ -1422,16 +1424,27 @@ function Root() {
   const handleFile = React.useCallback(
     (file: File) => {
       if (state.progress !== null || dragging || state.inkJob) return;
+      const version = ++importVersion.current;
       setIsLoadingFile(true);
-      setPlan(null);
+      setFileError(null);
 
       const reader = new FileReader();
       reader.onload = () => {
-        dispatch(setPaths(readSvg(reader.result as string)));
-        setFileName(file.name);
-        setIsLoadingFile(false);
+        if (version !== importVersion.current) return;
+        try {
+          const paths = readSvg(reader.result as string);
+          setPlan(null);
+          dispatch(setPaths(paths));
+          setFileName(file.name);
+        } catch (error) {
+          setFileError(error instanceof Error ? error.message : String(error));
+        } finally {
+          setIsLoadingFile(false);
+        }
       };
       reader.onerror = () => {
+        if (version !== importVersion.current) return;
+        setFileError("Could not read SVG file.");
         setIsLoadingFile(false);
       };
       reader.readAsText(file);
@@ -1456,11 +1469,13 @@ function Root() {
       document.body.classList.remove("dragover");
     };
     const onpaste = (e: ClipboardEvent) => {
-      if (state.inkJob || state.progress !== null || dragging) return;
-      e.clipboardData?.items[0].getAsString((s) => {
-        dispatch(setPaths(readSvg(s)));
-        setFileName("Pasted SVG");
-      });
+      if (state.inkJob || state.progress !== null || dragging || isLoadingFile) return;
+      const target = e.target;
+      if (target instanceof HTMLElement && (target.matches("input, textarea") || target.isContentEditable)) return;
+      const svg = e.clipboardData?.getData("image/svg+xml") || e.clipboardData?.getData("text/plain");
+      if (!svg || !svg.trimStart().startsWith("<")) return;
+      e.preventDefault();
+      handleFile(new File([svg], "Pasted SVG", { type: "image/svg+xml" }));
     };
     document.body.addEventListener("drop", ondrop);
     document.body.addEventListener("dragover", ondragover);
@@ -1472,7 +1487,7 @@ function Root() {
       document.body.removeEventListener("dragleave", ondragleave);
       document.removeEventListener("paste", onpaste);
     };
-  }, [handleFile, state.inkJob, state.progress, dragging]);
+  }, [handleFile, state.inkJob, state.progress, dragging, isLoadingFile]);
 
   // Each time new motion is started, save the start time
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentMotionStartedTime should be re-set with each motion
@@ -1484,11 +1499,11 @@ function Root() {
   const previewSize = useComponentSize(previewArea);
   const showDragTarget = !state.paths && !plan && !isLoadingFile && !isPlanning;
 
-  const locked = state.progress !== null || dragging || !!state.inkJob;
+  const locked = state.progress !== null || dragging || !!state.inkJob || isLoadingFile;
   const inks = useMemo(() => state.paths ? availableInks(state.paths, state.planOptions) : [], [state.paths, state.planOptions]);
   const physicalConnected = !!driver?.connected && (IS_WEB || !!state.deviceInfo?.path);
-  const canLive = physicalConnected && !!state.planOptions.manualPlacement && !planningError;
-  const inkReady = !isPlanning && !planningError && !!plan && !isLoadingFile && state.progress === null;
+  const canLive = physicalConnected && !!state.planOptions.manualPlacement && !planningError && !fileError;
+  const inkReady = !isPlanning && !planningError && !fileError && !!plan && !isLoadingFile && state.progress === null;
   const startInk = async () => {
     const job = state.inkJob;
     if (!job || job.stage !== "ready" || !inkReady || !plan) return;
@@ -1616,7 +1631,7 @@ function Root() {
                 width: Math.max(previewSize.width, viewport.width * zoom + 88),
                 height: Math.max(previewSize.height, viewport.height * zoom + 88),
               }}>
-                <PlanPreview state={state} previewSize={{ width: viewport.width * zoom, height: viewport.height * zoom }} plan={plan} onDragging={setDragging} allowDrag={!panMode && !state.inkJob} />
+                <PlanPreview state={state} previewSize={{ width: viewport.width * zoom, height: viewport.height * zoom }} plan={plan} onDragging={setDragging} allowDrag={!panMode && !state.inkJob && !isLoadingFile} />
                 <PlanLoader isPlanning={isPlanning} isLoadingFile={isLoadingFile} />
                 {showDragTarget && (
                   <div className="drag-target">
@@ -1680,7 +1695,7 @@ function Root() {
                         <button type="button" disabled={locked} onClick={() => dispatch({ type: "SET_PLAN_OPTION", value: { layerMode: "stroke" } })}>Use stroke layers</button>
                       </div>
                     ) : inks.length < 2 ? <div className="ink-caption">Select at least two drawable colors.</div> : (
-                      <InkQueueSetup key={JSON.stringify(inks)} inks={inks} canLive={canLive} disabled={locked || isPlanning || !!planningError || isLoadingFile} />
+                      <InkQueueSetup key={JSON.stringify(inks)} inks={inks} canLive={canLive} disabled={locked || isPlanning || !!planningError || !!fileError || isLoadingFile} />
                     )}
                   </div>
                 </details>
@@ -1691,9 +1706,10 @@ function Root() {
               <div className="section-body section-body__plot">
                 <PlanStatistics plan={plan} />
                 <TimeLeft plan={plan} progress={state.progress} currentMotionStartedTime={currentMotionStartedTime} paused={state.paused} />
+                {fileError && <div className="placement-error" role="alert">{fileError} Open a valid SVG to continue.</div>}
                 {planningError && <div className="placement-error" role="alert">{planningError}</div>}
                 {state.inkJob && <InkJobPanel job={state.inkJob} ready={inkReady} onStart={() => void startInk()} onConfirm={() => void confirmInk()} />}
-                <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || isLoadingFile} />
+                <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || !!fileError || isLoadingFile} />
               </div>
             </div>
           </aside>
@@ -1717,6 +1733,7 @@ function readSvg(svgString: string): Path[] {
   const doc = parser.parseFromString(svgString, "image/svg+xml");
 
   const svg = doc.querySelector("svg");
+  if (!svg || doc.querySelector("parsererror")) throw new Error("Invalid SVG document.");
   // flattenSVG relies on getCTM(), which returns null on elements that aren't
   // part of a rendered document. Without it, the viewBox -> width/height
   // scaling is lost and drawings with a viewBox come out the wrong size, so
@@ -1727,7 +1744,11 @@ function readSvg(svgString: string): Path[] {
   document.body.appendChild(container);
   try {
     container.appendChild(document.importNode(svg, true));
-    return flattenSVG(container.querySelector("svg"));
+    const attachedSvg = container.querySelector("svg");
+    if (!attachedSvg) throw new Error("SVG could not be attached.");
+    const paths = flattenSVG(attachedSvg);
+    if (!paths.some((path) => path.points.length > 1)) throw new Error("SVG has no drawable paths.");
+    return paths;
   } finally {
     container.remove();
   }

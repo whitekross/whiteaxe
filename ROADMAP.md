@@ -1,6 +1,6 @@
 # Whiteaxe roadmap
 
-Status: Phases 0–3B complete and approved. Phase 4 guided multicolor in review. Hardware tests remain pending.
+Status: Phases 0–4 approved and merged. Phase 5 release candidate preparation and physical validation in progress.
 
 ## Phase 0 — Feasibility and scope
 
@@ -53,9 +53,11 @@ GATE 3B: approved and merged. 37 tests and 18 Chrome checks passed (run 45693782
 
 Approved increment: reorder selected stroke colors, guided pen changes, explicit per-layer confirmation and dry-run sequence. Per-layer simulated width/ink color, sheet color and session persistence remain deferred. Preserve explicit control over physical pen changes; no automatic motion without operator initiation.
 
-GATE 4: approved enhancements validated individually; existing single-layer workflow unchanged.
+GATE 4: approved and merged. CI run 45696276956: 44 automated tests and 19 browser checks passed.
 
 ## Phase 5 — Hardware and release validation
+
+- Make UI typecheck blocking; fix malformed import handling and prepare physical calibration fixtures. See [Ubuntu installation and calibration guide](docs/whiteaxe-installation.md).
 
 - On Ubuntu with the actual AxiDraw: connection, pen-up/down, small safe test plot, alignment across colors, manual offsets and boundaries, pause/resume and cancellation behavior.
 - Check macOS compatibility separately if hardware/platform available.
