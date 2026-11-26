@@ -254,6 +254,37 @@ try {
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await page.screenshot({ path: join(output, "10-generative-dark.png"), fullPage: true });
   pass("complex four-ink artwork imports, filters and restores without geometry changes");
+  // Guided workflow, using the real planner but never the serial port.
+  await page.locator(".ink-settings > summary").click();
+  await page.getByRole("button", { name: "Use stroke layers", exact: true }).click();
+  await idle();
+  const allInks = await snapshot();
+  const initialOrder = await page.locator(".ink-queue .ink-name").allTextContents();
+  assert.equal(initialOrder.length, 4);
+  await page.locator(".ink-queue .ink-row").first().getByRole("button", { name: /down$/ }).click();
+  const reordered = await page.locator(".ink-queue .ink-name").allTextContents();
+  assert.equal(reordered[0], initialOrder[1]);
+  assert.equal(await page.getByRole("button", { name: "Prepare live job" }).isDisabled(), true);
+  await page.getByRole("button", { name: "Dry run", exact: true }).click();
+  await waitForPaths(36);
+  await idle();
+  assert.equal(await page.locator(".ink-current .ink-name").innerText(), reordered[0]);
+  assert.equal(await page.getByRole("button", { name: "Open SVG" }).isDisabled(), true);
+  assert.equal(await page.locator(".placement-controls select").isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Plot", exact: true }).count(), 0);
+  await page.screenshot({ path: join(output, "11-ink-dry-run.png"), fullPage: true });
+  for (let index = 0; index < reordered.length; index++) {
+    const ink = await page.locator(".ink-current .layer-swatch").evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.deepEqual(await snapshot(), allInks.filter(p => p.stroke === ink));
+    await page.getByRole("button", { name: "Simulate layer", exact: true }).click();
+    await page.getByRole("button", { name: index === reordered.length - 1 ? "Finish sequence" : "Confirm & prepare next ink", exact: true }).click();
+    await idle();
+  }
+  await page.getByRole("button", { name: "Close sequence", exact: true }).click();
+  await waitForPaths(144);
+  await idle();
+  assert.deepEqual(await snapshot(), allInks);
+  pass("four-ink dry run reorders, locks placement, confirms each layer and restores original selection");
   assert.deepEqual(errors, [], "uncaught browser errors");
   pass("no uncaught browser errors");
 } catch (error) {

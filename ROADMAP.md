@@ -1,6 +1,6 @@
 # Whiteaxe roadmap
 
-Status: Phases 0–3 complete and approved. Phase 3B Studio redesign in review. Hardware tests remain pending.
+Status: Phases 0–3B complete and approved. Phase 4 guided multicolor in review. Hardware tests remain pending.
 
 ## Phase 0 — Feasibility and scope
 
@@ -47,11 +47,11 @@ GATE 3: approved and merged; 37 automated tests and 14 browser checks passed (ru
 - Header SVG opening and connection status, light/dark themes, paper rulers, zoom/pan and selection outline.
 - Preserve all prior functionality and verify with existing and expanded real browser tests.
 
-GATE 3B: functional and visual review of the real interface, no changes to motion planning.
+GATE 3B: approved and merged. 37 tests and 18 Chrome checks passed (run 45693782623).
 
 ## Phase 4 — Optional multicolor workflow
 
-Candidate features, subject to separate scope approval: reorder layers, guided pen changes, per-layer simulated width and ink color, sheet color, session persistence. Preserve explicit control over physical pen changes; no automatic motion without operator initiation.
+Approved increment: reorder selected stroke colors, guided pen changes, explicit per-layer confirmation and dry-run sequence. Per-layer simulated width/ink color, sheet color and session persistence remain deferred. Preserve explicit control over physical pen changes; no automatic motion without operator initiation.
 
 GATE 4: approved enhancements validated individually; existing single-layer workflow unchanged.
 

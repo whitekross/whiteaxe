@@ -18,6 +18,7 @@ import React, {
 } from "react";
 import { createRoot } from "react-dom/client";
 import { artworkBounds, centerManual, layerStrokes, manualDimensions, manualPlacementError, placeArtwork, previewInk, startManual } from "./artwork.js";
+import { advanceInkJob, availableInks, createInkJob, type InkEvent, type InkJob, type InkMode, inkSelection, moveInk } from "./ink-workflow.js";
 import { PaperSize } from "./paper-size.js";
 import { Device, defaultPlanOptions, Plan, type ManualPlacement, type PlanOptions, type TransferredMotion, XYMotion } from "./planning.js";
 import useComponentSize from "./useComponentSize.js";
@@ -38,6 +39,7 @@ const initialState = {
   connected: true,
 
   paused: false,
+  inkJob: null as InkJob | null,
 
   deviceInfo: null as DeviceInfo | null,
 
@@ -70,6 +72,9 @@ initialState.planOptions.selectedGroupLayers = new Set();
 type State = typeof initialState;
 
 type Action =
+  | { type: "START_INK_JOB"; inks: string[]; mode: InkMode }
+  | { type: "INK_EVENT"; event: InkEvent }
+  | { type: "END_INK_JOB" }
   | { type: "SET_PLAN_OPTION"; value: Partial<State["planOptions"]> }
   | { type: "SET_VISUALIZATION_OPTION"; value: Partial<State["visualizationOptions"]> }
   | { type: "SET_DEVICE_INFO"; value: State["deviceInfo"] }
@@ -98,7 +103,31 @@ const DispatchContext = React.createContext<Dispatcher>(nullDispatch);
  */
 function reducer(state: State, action: Action): State {
   switch (action.type) {
+    case "START_INK_JOB": {
+      if (!state.paths || state.inkJob || state.progress !== null) return state;
+      const inkJob = createInkJob(state.paths, state.planOptions, action.inks, action.mode);
+      return { ...state, inkJob, planOptions: { ...state.planOptions, selectedStrokeLayers: inkSelection(inkJob) } };
+    }
+    case "INK_EVENT": {
+      if (!state.inkJob) return state;
+      const inkJob = advanceInkJob(state.inkJob, action.event);
+      if (inkJob === state.inkJob) return state;
+      return {
+        ...state,
+        inkJob,
+        planOptions: inkJob.index === state.inkJob.index ? state.planOptions : { ...state.planOptions, selectedStrokeLayers: inkSelection(inkJob) },
+      };
+    }
+    case "END_INK_JOB":
+      if (!state.inkJob || state.inkJob.stage === "running" || state.progress !== null) return state;
+      return { ...state, inkJob: null, planOptions: { ...state.planOptions, selectedStrokeLayers: state.inkJob.originalSelection } };
     case "SET_PLAN_OPTION":
+      if (state.inkJob) {
+        if (action.value.hardware && action.value.hardware !== state.planOptions.hardware) {
+          return { ...state, inkJob: advanceInkJob(state.inkJob, "interrupt"), planOptions: { ...state.planOptions, hardware: action.value.hardware, machineTravel: undefined } };
+        }
+        return state;
+      }
       if (state.progress !== null) return state;
       return {
         ...state,
@@ -115,7 +144,7 @@ function reducer(state: State, action: Action): State {
     case "SET_PAUSED":
       return { ...state, paused: action.value };
     case "SET_PATHS": {
-      if (state.progress !== null) return state;
+      if (state.progress !== null || state.inkJob) return state;
       const { paths, strokeLayers, selectedStrokeLayers, groupLayers, selectedGroupLayers, layerMode } = action;
       return {
         ...state,
@@ -128,7 +157,7 @@ function reducer(state: State, action: Action): State {
     case "SET_PROGRESS":
       return { ...state, progress: action.motionIdx };
     case "SET_CONNECTED":
-      return { ...state, connected: action.connected };
+      return { ...state, connected: action.connected, inkJob: !action.connected && state.inkJob?.mode === "live" ? advanceInkJob(state.inkJob, "interrupt") : state.inkJob };
     default:
       console.warn(`Unrecognized action '${{ action }}'`);
       return state;
@@ -976,6 +1005,59 @@ function LayerSelector({ state }: { state: State }) {
   );
 }
 
+function InkQueueSetup({ inks, canLive, disabled }: { inks: string[]; canLive: boolean; disabled: boolean }) {
+  const dispatch = useContext(DispatchContext);
+  const [order, setOrder] = useState(inks);
+  return (
+    <div className="ink-queue">
+      <div className="ink-caption">Choose the order of the selected source colors.</div>
+      {order.map((ink, index) => (
+        <div className="ink-row" key={ink}>
+          <span className="ink-number">{index + 1}</span>
+          <span className="layer-swatch" style={{ backgroundColor: previewInk(ink, (v) => CSS.supports("color", v)) ?? "#777777" }} />
+          <span className="ink-name" title={ink}>{ink || "Unknown stroke"}</span>
+          <button type="button" aria-label={`Move ${ink} up`} disabled={index === 0 || disabled} onClick={() => setOrder(moveInk(order, index, -1))}>↑</button>
+          <button type="button" aria-label={`Move ${ink} down`} disabled={index === order.length - 1 || disabled} onClick={() => setOrder(moveInk(order, index, 1))}>↓</button>
+        </div>
+      ))}
+      <div className="ink-actions">
+        <button type="button" disabled={disabled} onClick={() => dispatch({ type: "START_INK_JOB", inks: order, mode: "dry-run" })}>Dry run</button>
+        <button type="button" disabled={disabled || !canLive} onClick={() => dispatch({ type: "START_INK_JOB", inks: order, mode: "live" })}>Prepare live job</button>
+      </div>
+      {!canLive && <div className="ink-caption">Live requires a connected plotter, valid Manual placement and measured machine travel. Dry run never sends motion.</div>}
+    </div>
+  );
+}
+
+function InkJobPanel({ job, ready, onStart, onConfirm }: { job: InkJob; ready: boolean; onStart: () => void; onConfirm: () => void }) {
+  const dispatch = useContext(DispatchContext);
+  const current = job.inks[job.index];
+  return (
+    <div className="ink-queue ink-active">
+      <div className="ink-job-title">{job.mode === "dry-run" ? "Dry run · no hardware" : "Guided ink job"} <span>{job.index + 1}/{job.inks.length}</span></div>
+      {job.inks.map((ink, i) => (
+        <div key={ink} className={`ink-row ${i === job.index ? "ink-current" : ""}`}>
+          <span className="ink-number">{i < job.index || job.stage === "complete" ? "✓" : i + 1}</span>
+          <span className="layer-swatch" style={{ backgroundColor: previewInk(ink, (v) => CSS.supports("color", v)) ?? "#777777" }} />
+          <span className="ink-name" title={ink}>{ink || "Unknown stroke"}</span>
+        </div>
+      ))}
+      {job.stage === "ready" && <>
+        <div className="ink-caption">{job.mode === "live" ? "Fit the indicated pen, verify the physical origin and paper alignment, and keep the carriage stationary during pen changes." : "Only this ink is selected in the real artwork and motion preview."}</div>
+        <button type="button" className="ink-primary" disabled={!ready} onClick={onStart}>{job.mode === "dry-run" ? "Simulate layer" : `Plot ${current || "current ink"}`}</button>
+      </>}
+      {job.stage === "running" && <div className="ink-caption">Plotting this ink. Wait for completion; Pause and Cancel remain available.</div>}
+      {job.stage === "review" && <>
+        <div className="ink-caption">{job.mode === "live" ? "Verify the machine is completely stopped and the layer is correct before continuing." : "Layer simulated. No movement was sent to the plotter."}</div>
+        <button type="button" className="ink-primary" disabled={!ready} onClick={onConfirm}>{job.index + 1 === job.inks.length ? "Finish sequence" : "Confirm & prepare next ink"}</button>
+      </>}
+      {job.stage === "complete" && <div className="ink-caption">Sequence complete. Close to restore the original selection.</div>}
+      {job.stage === "interrupted" && <div className="placement-error">Sequence interrupted. Verify the machine and origin before starting a new sequence. No automatic retry.</div>}
+      {job.stage !== "running" && <button type="button" disabled={!ready && job.stage !== "interrupted" && job.stage !== "complete"} onClick={() => dispatch({ type: "END_INK_JOB" })}>{job.stage === "complete" ? "Close sequence" : "End sequence"}</button>}
+    </div>
+  );
+}
+
 function PlotButtons({
   state,
   plan,
@@ -999,12 +1081,12 @@ function PlotButtons({
     driver?.resume();
   }
   function plot(plan: Plan) {
-    if (!blocked && driver?.connected) driver.plot(plan);
+    if (!blocked && driver?.connected) void Promise.resolve(driver.plot(plan)).catch((error) => console.error("Plot failed", error));
   }
 
   return (
     <div>
-      {isPlanning ? (
+      {!state.inkJob && (isPlanning ? (
         <button type="button" disabled={true}>
           Replanning...
         </button>
@@ -1017,7 +1099,7 @@ function PlotButtons({
         >
           {plan && state.progress !== null ? "Plotting..." : "Plot"}
         </button>
-      )}
+      ))}
       <div className={"button-row"}>
         <button
           type="button"
@@ -1305,8 +1387,14 @@ function Root() {
     driver.onprogress = (motionIdx: number) => {
       dispatch({ type: "SET_PROGRESS", motionIdx });
     };
-    driver.oncancelled = driver.onfinished = () => {
+    driver.oncancelled = () => {
       dispatch({ type: "SET_PROGRESS", motionIdx: null });
+      dispatch({ type: "INK_EVENT", event: "interrupt" });
+    };
+    driver.onfinished = () => {
+      dispatch({ type: "SET_PROGRESS", motionIdx: null });
+      // WebSerial completion is acknowledged only after its plot promise resolves (motor idle).
+      if (!IS_WEB) dispatch({ type: "INK_EVENT", event: "finished" });
     };
     driver.ondevinfo = (devInfo: DeviceInfo) => {
       dispatch({ type: "SET_DEVICE_INFO", value: devInfo });
@@ -1333,7 +1421,7 @@ function Root() {
 
   const handleFile = React.useCallback(
     (file: File) => {
-      if (state.progress !== null || dragging) return;
+      if (state.progress !== null || dragging || state.inkJob) return;
       setIsLoadingFile(true);
       setPlan(null);
 
@@ -1348,7 +1436,7 @@ function Root() {
       };
       reader.readAsText(file);
     },
-    [setPlan, state.progress, dragging],
+    [setPlan, state.progress, dragging, state.inkJob],
   );
 
   useEffect(() => {
@@ -1368,6 +1456,7 @@ function Root() {
       document.body.classList.remove("dragover");
     };
     const onpaste = (e: ClipboardEvent) => {
+      if (state.inkJob || state.progress !== null || dragging) return;
       e.clipboardData?.items[0].getAsString((s) => {
         dispatch(setPaths(readSvg(s)));
         setFileName("Pasted SVG");
@@ -1383,7 +1472,7 @@ function Root() {
       document.body.removeEventListener("dragleave", ondragleave);
       document.removeEventListener("paste", onpaste);
     };
-  }, [handleFile]);
+  }, [handleFile, state.inkJob, state.progress, dragging]);
 
   // Each time new motion is started, save the start time
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentMotionStartedTime should be re-set with each motion
@@ -1395,7 +1484,48 @@ function Root() {
   const previewSize = useComponentSize(previewArea);
   const showDragTarget = !state.paths && !plan && !isLoadingFile && !isPlanning;
 
-  const locked = state.progress !== null || dragging;
+  const locked = state.progress !== null || dragging || !!state.inkJob;
+  const inks = useMemo(() => state.paths ? availableInks(state.paths, state.planOptions) : [], [state.paths, state.planOptions]);
+  const physicalConnected = !!driver?.connected && (IS_WEB || !!state.deviceInfo?.path);
+  const canLive = physicalConnected && !!state.planOptions.manualPlacement && !planningError;
+  const inkReady = !isPlanning && !planningError && !!plan && !isLoadingFile && state.progress === null;
+  const startInk = async () => {
+    const job = state.inkJob;
+    if (!job || job.stage !== "ready" || !inkReady || !plan) return;
+    if (job.mode === "dry-run") {
+      dispatch({ type: "INK_EVENT", event: "simulate" });
+      return;
+    }
+    if (!canLive || !driver) return;
+    dispatch({ type: "INK_EVENT", event: "start" });
+    try {
+      if (!IS_WEB) {
+        const response = await fetch("/plot/status");
+        if (!response.ok || (await response.json()).plotting !== false) throw new Error("Plotter is busy.");
+      }
+      await driver.plot(plan);
+      if (IS_WEB) dispatch({ type: "INK_EVENT", event: "finished" });
+    } catch (error) {
+      console.error("Ink job interrupted", error);
+      dispatch({ type: "INK_EVENT", event: "interrupt" });
+    }
+  };
+  const confirmInk = async () => {
+    if (!state.inkJob || state.inkJob.stage !== "review" || !inkReady) return;
+    if (state.inkJob.mode === "live") {
+      if (!physicalConnected) return;
+      try {
+        if (!IS_WEB) {
+          const response = await fetch("/plot/status");
+          if (!response.ok || (await response.json()).plotting !== false) return;
+        }
+      } catch {
+        dispatch({ type: "INK_EVENT", event: "interrupt" });
+        return;
+      }
+    }
+    dispatch({ type: "INK_EVENT", event: "confirm" });
+  };
   const paper = state.planOptions.paperSize.size;
   const viewport = { width: Math.max(0, previewSize.width - 88), height: Math.max(0, previewSize.height - 88) };
   const changeZoom = (value: number) => setZoom(Math.max(0.5, Math.min(4, value)));
@@ -1486,7 +1616,7 @@ function Root() {
                 width: Math.max(previewSize.width, viewport.width * zoom + 88),
                 height: Math.max(previewSize.height, viewport.height * zoom + 88),
               }}>
-                <PlanPreview state={state} previewSize={{ width: viewport.width * zoom, height: viewport.height * zoom }} plan={plan} onDragging={setDragging} allowDrag={!panMode} />
+                <PlanPreview state={state} previewSize={{ width: viewport.width * zoom, height: viewport.height * zoom }} plan={plan} onDragging={setDragging} allowDrag={!panMode && !state.inkJob} />
                 <PlanLoader isPlanning={isPlanning} isLoadingFile={isLoadingFile} />
                 {showDragTarget && (
                   <div className="drag-target">
@@ -1541,6 +1671,20 @@ function Root() {
                   </div>
                 </details>
               </fieldset>
+              {!state.inkJob && state.paths && (
+                <details className="inspector-section ink-settings">
+                  <summary className="section-header">Multicolor sequence</summary>
+                  <div className="section-body">
+                    {state.planOptions.layerMode !== "stroke" ? (
+                      <div className="ink-caption">Choose stroke layers for pen changes. Mixed groups are not treated as one ink.
+                        <button type="button" disabled={locked} onClick={() => dispatch({ type: "SET_PLAN_OPTION", value: { layerMode: "stroke" } })}>Use stroke layers</button>
+                      </div>
+                    ) : inks.length < 2 ? <div className="ink-caption">Select at least two drawable colors.</div> : (
+                      <InkQueueSetup key={JSON.stringify(inks)} inks={inks} canLive={canLive} disabled={locked || isPlanning || !!planningError || isLoadingFile} />
+                    )}
+                  </div>
+                </details>
+              )}
             </div>
             <div className="control-panel-bottom">
               <div className="section-header">Plot job</div>
@@ -1548,6 +1692,7 @@ function Root() {
                 <PlanStatistics plan={plan} />
                 <TimeLeft plan={plan} progress={state.progress} currentMotionStartedTime={currentMotionStartedTime} paused={state.paused} />
                 {planningError && <div className="placement-error" role="alert">{planningError}</div>}
+                {state.inkJob && <InkJobPanel job={state.inkJob} ready={inkReady} onStart={() => void startInk()} onConfirm={() => void confirmInk()} />}
                 <PlotButtons plan={plan} isPlanning={isPlanning || dragging} state={state} driver={driver} blocked={!!planningError || isLoadingFile} />
               </div>
             </div>
