@@ -61,8 +61,7 @@ jobs:
           path: ui-test-results/
           if-no-files-found: ignore
           retention-days: 7
-      - name: UI typecheck (known upstream baseline debt; advisory)
-        continue-on-error: true
+      - name: UI typecheck
         run: npx --no-install tsc --project tsconfig.ui.json --noEmit
 permissions:
   contents: read

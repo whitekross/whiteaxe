@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="30mm" viewBox="0 0 30 30" fill="none" stroke-width=".25">
+  <g id="black" stroke="#222222">
+    <path d="M0 0H30V30H0Z"/>
+    <path d="M5 15H25M15 5V25"/>
+  </g>
+  <g id="red" stroke="#b33d32">
+    <path d="M5 15V5H15M15 5H25V15M25 15V25H15M15 25H5V15"/>
+    <path d="M12 12L18 18M18 12L12 18"/>
+  </g>
+</svg>
